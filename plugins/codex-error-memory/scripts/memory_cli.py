@@ -6,19 +6,33 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Iterable
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = PLUGIN_ROOT / "data" / "error_memory.sqlite"
+CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+DEFAULT_DB = Path(os.environ.get("CODEX_ERROR_MEMORY_DB") or CODEX_HOME / "error-memory" / "error_memory.sqlite")
+LEGACY_DB = PLUGIN_ROOT / "data" / "error_memory.sqlite"
 
 TOKEN_RE = re.compile(r"(?i)(bearer\s+)[a-z0-9._\-]{16,}")
-SECRET_RE = re.compile(r"(?i)(password|passwd|secret|token|key)\s*[:=]\s*[^,\s;]+")
+SECRET_RE = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|secret[_-]?key|wx[_-]?secret|access[_-]?key)\b\s*[:=]\s*(['\"]?)[^,\s;'\"]+\2")
+COMMON_SECRET_RE = re.compile(
+    r"(?i)\b("
+    r"sk-[A-Za-z0-9_-]{20,}|"
+    r"gh[pousr]_[A-Za-z0-9_]{20,}|"
+    r"AKIA[0-9A-Z]{16}|"
+    r"ASIA[0-9A-Z]{16}|"
+    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    r")\b"
+)
+PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)
 EMAIL_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"\b1[3-9]\d{9}\b")
 OPENID_RE = re.compile(r"\bo[A-Za-z0-9_-]{20,}\b")
@@ -159,6 +173,19 @@ BUILTIN_MEMORIES = [
         "commands_often_used": "git tag -f <version>; git push origin <version> --force",
     },
     {
+        "title": "GitHub 推送被失效本地代理拦截",
+        "category": "git",
+        "severity": "medium",
+        "signature": "Failed to connect to github.com port 443 via 127.0.0.1 Could not connect to server",
+        "keywords": "git github push proxy 127.0.0.1 port 443 could not connect",
+        "root_cause": "全局 Git 配置中的 `http.proxy` 或 `https.proxy` 指向本地代理端口，但该代理没有运行，导致 GitHub 推送无法连接。",
+        "fix_steps": "先用 `git config --show-origin --get-regexp \"http.*proxy|https.*proxy\"` 定位代理来源；不想改全局配置时，对单次推送使用 `git -c http.proxy= -c https.proxy= push ...` 绕过代理。",
+        "prevention_rule": "GitHub 推送失败且错误里出现 `127.0.0.1` 时，优先检查本机代理配置，不要先怀疑远程仓库或凭证。",
+        "verification_steps": "`git push origin main` 成功；`git ls-remote --tags origin` 能查到目标标签。",
+        "files_often_involved": ".gitconfig, repository git config",
+        "commands_often_used": "git config --show-origin --get-regexp \"http.*proxy|https.*proxy\"; git -c http.proxy= -c https.proxy= push origin main",
+    },
+    {
         "title": "Codex 插件市场仓库不要同时作为根插件",
         "category": "plugin",
         "severity": "medium",
@@ -250,6 +277,19 @@ BUILTIN_MEMORIES = [
         "commands_often_used": "Copy-Item -Path 'C:\\source\\*' -Destination 'C:\\target' -Recurse -Force",
     },
     {
+        "title": "New-Item 在旧 Windows PowerShell 中不支持 LiteralPath",
+        "category": "shell",
+        "severity": "low",
+        "signature": "New-Item A parameter cannot be found that matches parameter name LiteralPath",
+        "keywords": "powershell new-item literalpath parameter not found older windows powershell",
+        "root_cause": "部分 Windows PowerShell 版本的 `New-Item` 没有 `-LiteralPath` 参数，虽然其他文件 cmdlet 支持。",
+        "fix_steps": "创建目录时先把精确路径放进变量，再使用 `New-Item -ItemType Directory -Path $path`；删除、移动、读取仍优先使用支持 `-LiteralPath` 的 cmdlet。",
+        "prevention_rule": "需要兼容旧 Windows PowerShell 时，不要假设所有文件 cmdlet 都支持 `-LiteralPath`。",
+        "verification_steps": "目录创建成功，不再出现 parameter name 'LiteralPath' 错误。",
+        "files_often_involved": "PowerShell commands, temporary test setup scripts",
+        "commands_often_used": "$path = Join-Path $env:TEMP 'example'; New-Item -ItemType Directory -Path $path",
+    },
+    {
         "title": "Start-Process 二次解析丢失 Program Files 路径引号",
         "category": "shell",
         "severity": "medium",
@@ -270,7 +310,9 @@ def now() -> str:
 
 
 def sanitize(text: str) -> str:
+    text = PRIVATE_KEY_RE.sub("[PRIVATE_KEY]", text)
     text = TOKEN_RE.sub(r"\1[REDACTED]", text)
+    text = COMMON_SECRET_RE.sub("[SECRET]", text)
     text = SECRET_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", text)
     text = EMAIL_RE.sub("[EMAIL]", text)
     text = PHONE_RE.sub("[PHONE]", text)
@@ -284,11 +326,41 @@ def project_hash(path: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def project_label(path: str) -> str:
+    resolved = Path(path).resolve()
+    name = resolved.name or "project"
+    return f"{name}#{project_hash(str(resolved))}"
+
+
+def builtin_digest(item: dict[str, object]) -> str:
+    payload = json.dumps(item, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def migrate_legacy_db(db_path: Path) -> None:
+    if db_path.resolve() != DEFAULT_DB.resolve():
+        return
+    if db_path.exists() or not LEGACY_DB.exists() or LEGACY_DB.resolve() == db_path.resolve():
+        return
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    db_path.write_bytes(LEGACY_DB.read_bytes())
+
+
+def connect(db_path: Path) -> sqlite3.Connection:
+    migrate_legacy_db(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -314,6 +386,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             confidence INTEGER NOT NULL DEFAULT 3,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            builtin_hash TEXT NOT NULL DEFAULT '',
             FOREIGN KEY(project_id) REFERENCES projects(id)
         );
         CREATE TABLE IF NOT EXISTS solutions (
@@ -341,26 +414,65 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    ensure_column(conn, "error_patterns", "builtin_hash", "TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_error_patterns_project_updated ON error_patterns(project_id, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_error_patterns_builtin ON error_patterns(project_id, title, builtin_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_occurrences_pattern ON occurrences(pattern_id, occurred_at)")
     seed_builtin_memories(conn)
     conn.commit()
 
 
 def seed_builtin_memories(conn: sqlite3.Connection) -> None:
     for item in BUILTIN_MEMORIES:
+        digest = builtin_digest(item)
         exists = conn.execute(
-            "SELECT id FROM error_patterns WHERE project_id IS NULL AND title = ?",
+            """
+            SELECT p.id, p.builtin_hash
+            FROM error_patterns p
+            WHERE p.project_id IS NULL AND p.title = ?
+            """,
             (item["title"],),
         ).fetchone()
         if exists:
+            if exists["builtin_hash"] == digest:
+                continue
+            ts = now()
+            conn.execute(
+                """
+                UPDATE error_patterns
+                SET signature = ?, keywords = ?, category = ?, severity = ?, confidence = MAX(confidence, 4),
+                    builtin_hash = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (item["signature"], item["keywords"], item["category"], item["severity"], digest, ts, exists["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE solutions
+                SET root_cause = ?, fix_steps = ?, prevention_rule = ?, verification_steps = ?,
+                    files_often_involved = ?, commands_often_used = ?, updated_at = ?
+                WHERE pattern_id = ?
+                """,
+                (
+                    item["root_cause"],
+                    item["fix_steps"],
+                    item["prevention_rule"],
+                    item["verification_steps"],
+                    item["files_often_involved"],
+                    item["commands_often_used"],
+                    ts,
+                    exists["id"],
+                ),
+            )
             continue
         ts = now()
         cur = conn.execute(
             """
             INSERT INTO error_patterns
-            (project_id, title, signature, keywords, stack_pattern, category, severity, confidence, created_at, updated_at)
-            VALUES (NULL, ?, ?, ?, '', ?, ?, 4, ?, ?)
+            (project_id, title, signature, keywords, stack_pattern, category, severity, confidence, created_at, updated_at, builtin_hash)
+            VALUES (NULL, ?, ?, ?, '', ?, ?, 4, ?, ?, ?)
             """,
-            (item["title"], item["signature"], item["keywords"], item["category"], item["severity"], ts, ts),
+            (item["title"], item["signature"], item["keywords"], item["category"], item["severity"], ts, ts, digest),
         )
         conn.execute(
             """
@@ -382,7 +494,7 @@ def seed_builtin_memories(conn: sqlite3.Connection) -> None:
         )
 
 
-def get_project(conn: sqlite3.Connection, project: str | None) -> int | None:
+def get_project(conn: sqlite3.Connection, project: str | None, *, create: bool = True) -> int | None:
     if not project:
         return None
     path = Path(project).resolve()
@@ -390,6 +502,8 @@ def get_project(conn: sqlite3.Connection, project: str | None) -> int | None:
     row = conn.execute("SELECT id FROM projects WHERE root_path_hash = ?", (root_hash,)).fetchone()
     if row:
         return int(row["id"])
+    if not create:
+        return None
     ts = now()
     cur = conn.execute(
         "INSERT INTO projects (name, root_path_hash, tags, created_at, updated_at) VALUES (?, ?, '', ?, ?)",
@@ -429,21 +543,47 @@ def read_text_arg(args: argparse.Namespace) -> str:
 def command_search(args: argparse.Namespace) -> int:
     with connect(Path(args.db)) as conn:
         init_db(conn)
-        project_id = get_project(conn, args.project)
+        project_id = get_project(conn, args.project, create=False)
         text = sanitize(read_text_arg(args))
         if not text.strip():
             print("No error text provided.")
             return 1
+        query_tokens = sorted(tokens(text), key=len, reverse=True)[:8]
+        where = ["(p.project_id IS NULL OR p.project_id = ?)"]
+        params: list[object] = [project_id]
+        if query_tokens:
+            like_parts = []
+            for item in query_tokens:
+                like_parts.append("(p.title LIKE ? OR p.signature LIKE ? OR p.keywords LIKE ? OR p.stack_pattern LIKE ?)")
+                needle = f"%{item}%"
+                params.extend([needle, needle, needle, needle])
+            where.append("(" + " OR ".join(like_parts) + ")")
+        params.append(max(args.limit * 40, 200))
         rows = conn.execute(
-            """
+            f"""
             SELECT p.*, s.root_cause, s.fix_steps, s.prevention_rule, s.verification_steps,
                    s.files_often_involved, s.commands_often_used
             FROM error_patterns p
             LEFT JOIN solutions s ON s.pattern_id = p.id
-            WHERE p.project_id IS NULL OR p.project_id = ?
+            WHERE {' AND '.join(where)}
+            ORDER BY p.confidence DESC, p.updated_at DESC
+            LIMIT ?
             """,
-            (project_id,),
+            params,
         ).fetchall()
+        if not rows and query_tokens:
+            rows = conn.execute(
+                """
+                SELECT p.*, s.root_cause, s.fix_steps, s.prevention_rule, s.verification_steps,
+                       s.files_often_involved, s.commands_often_used
+                FROM error_patterns p
+                LEFT JOIN solutions s ON s.pattern_id = p.id
+                WHERE p.project_id IS NULL OR p.project_id = ?
+                ORDER BY p.confidence DESC, p.updated_at DESC
+                LIMIT ?
+                """,
+                (project_id, max(args.limit * 40, 200)),
+            ).fetchall()
         ranked = sorted(((score(text, row), row) for row in rows), key=lambda item: item[0], reverse=True)
         matches = [(value, row) for value, row in ranked if value >= args.min_score][: args.limit]
         if not matches:
@@ -474,7 +614,7 @@ def command_search(args: argparse.Namespace) -> int:
 def command_add(args: argparse.Namespace) -> int:
     with connect(Path(args.db)) as conn:
         init_db(conn)
-        project_id = get_project(conn, args.project)
+        project_id = get_project(conn, args.project, create=True)
         raw_error = sanitize(read_text_arg(args))
         signature = sanitize(args.signature or raw_error[:500] or args.title)
         ts = now()
@@ -519,7 +659,7 @@ def command_add(args: argparse.Namespace) -> int:
         if raw_error:
             conn.execute(
                 "INSERT INTO occurrences (pattern_id, raw_error_excerpt, project_path, resolved, resolution_note, occurred_at) VALUES (?, ?, ?, 1, ?, ?)",
-                (pattern_id, raw_error[:1000], str(Path(args.project).resolve()) if args.project else "", "memory added", ts),
+                (pattern_id, raw_error[:1000], project_label(args.project) if args.project else "", "memory added", ts),
             )
         conn.commit()
         print(json.dumps({"added": True, "pattern_id": pattern_id}, ensure_ascii=False, indent=2))
@@ -529,6 +669,10 @@ def command_add(args: argparse.Namespace) -> int:
 def command_record(args: argparse.Namespace) -> int:
     with connect(Path(args.db)) as conn:
         init_db(conn)
+        exists = conn.execute("SELECT id FROM error_patterns WHERE id = ?", (args.pattern_id,)).fetchone()
+        if not exists:
+            print(json.dumps({"recorded": False, "error": f"pattern_id {args.pattern_id} does not exist"}, ensure_ascii=False, indent=2))
+            return 2
         raw_error = sanitize(read_text_arg(args))
         ts = now()
         conn.execute(
@@ -536,7 +680,7 @@ def command_record(args: argparse.Namespace) -> int:
             (
                 args.pattern_id,
                 raw_error[:1000],
-                str(Path(args.project).resolve()) if args.project else "",
+                project_label(args.project) if args.project else "",
                 1 if args.resolved else 0,
                 args.note or "",
                 ts,
@@ -555,7 +699,7 @@ def command_record(args: argparse.Namespace) -> int:
 def command_list(args: argparse.Namespace) -> int:
     with connect(Path(args.db)) as conn:
         init_db(conn)
-        project_id = get_project(conn, args.project)
+        project_id = get_project(conn, args.project, create=False)
         rows = conn.execute(
             """
             SELECT id, title, category, severity, confidence, updated_at
@@ -568,6 +712,69 @@ def command_list(args: argparse.Namespace) -> int:
         ).fetchall()
         print(json.dumps({"memories": [dict(row) for row in rows]}, ensure_ascii=False, indent=2))
         return 0
+
+
+def markdown_safe(value: object, *, max_len: int = 3000) -> str:
+    text = sanitize(str(value or ""))
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?m)^(#{1,6})", r"\\\1", text)
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    if len(text) > max_len:
+        return text[:max_len] + "\n\n...[truncated]"
+    return text
+
+
+def command_export(args: argparse.Namespace) -> int:
+    with connect(Path(args.db)) as conn:
+        init_db(conn)
+        project_id = get_project(conn, args.project, create=False)
+        rows = conn.execute(
+            """
+            SELECT p.*, s.root_cause, s.fix_steps, s.prevention_rule, s.verification_steps,
+                   s.files_often_involved, s.commands_often_used
+            FROM error_patterns p
+            LEFT JOIN solutions s ON s.pattern_id = p.id
+            WHERE p.project_id IS NULL OR p.project_id = ?
+            ORDER BY p.category, p.title
+            LIMIT ?
+            """,
+            (project_id, args.limit),
+        ).fetchall()
+    parts = ["# Codex Error Memory", ""]
+    for row in rows:
+        parts.extend(
+            [
+                f"## {markdown_safe(row['title'], max_len=120)}",
+                "",
+                f"- Category: `{markdown_safe(row['category'], max_len=80)}`",
+                f"- Severity: `{markdown_safe(row['severity'], max_len=80)}`",
+                f"- Confidence: `{int(row['confidence'])}`",
+                "",
+                "### Signature",
+                "",
+                markdown_safe(row["signature"]),
+                "",
+                "### Root Cause",
+                "",
+                markdown_safe(row["root_cause"]),
+                "",
+                "### Fix Steps",
+                "",
+                markdown_safe(row["fix_steps"]),
+                "",
+                "### Prevention",
+                "",
+                markdown_safe(row["prevention_rule"]),
+                "",
+                "### Verification",
+                "",
+                markdown_safe(row["verification_steps"]),
+                "",
+            ]
+        )
+    Path(args.out).write_text("\n".join(parts), encoding="utf-8")
+    print(json.dumps({"exported": len(rows), "out": args.out}, ensure_ascii=False, indent=2))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -615,6 +822,12 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_argument("--project", default="")
     list_cmd.add_argument("--limit", type=int, default=20)
     list_cmd.set_defaults(func=command_list)
+
+    export_cmd = sub.add_parser("export", help="Export known memories to sanitized Markdown.")
+    export_cmd.add_argument("--project", default="")
+    export_cmd.add_argument("--out", required=True)
+    export_cmd.add_argument("--limit", type=int, default=1000)
+    export_cmd.set_defaults(func=command_export)
     return parser
 
 

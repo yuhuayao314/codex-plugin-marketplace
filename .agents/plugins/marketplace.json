@@ -11,8 +11,7 @@
         "path": "./plugins/codex-powershell-guardrails"
       },
       "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
+        "installation": "AVAILABLE"
       },
       "category": "Productivity"
     },
@@ -23,8 +22,7 @@
         "path": "./plugins/codex-error-memory"
       },
       "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
+        "installation": "AVAILABLE"
       },
       "category": "Productivity"
     }

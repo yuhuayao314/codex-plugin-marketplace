@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import sqlite3
 from pathlib import Path
 
-from memory_cli import DEFAULT_DB, connect, get_project, init_db
+from memory_cli import DEFAULT_DB, connect, get_project, init_db, markdown_safe
 
 
 def main() -> int:
@@ -19,7 +18,7 @@ def main() -> int:
 
     with connect(Path(args.db)) as conn:
         init_db(conn)
-        project_id = get_project(conn, args.project)
+        project_id = get_project(conn, args.project, create=False)
         rows = conn.execute(
             """
             SELECT p.*, s.root_cause, s.fix_steps, s.prevention_rule, s.verification_steps,
@@ -36,31 +35,31 @@ def main() -> int:
     for row in rows:
         parts.extend(
             [
-                f"## {row['title']}",
+                f"## {markdown_safe(row['title'], max_len=120)}",
                 "",
-                f"- Category: `{row['category']}`",
-                f"- Severity: `{row['severity']}`",
+                f"- Category: `{markdown_safe(row['category'], max_len=80)}`",
+                f"- Severity: `{markdown_safe(row['severity'], max_len=80)}`",
                 f"- Confidence: `{row['confidence']}`",
                 "",
                 "### Signature",
                 "",
-                row["signature"] or "",
+                markdown_safe(row["signature"]),
                 "",
                 "### Root Cause",
                 "",
-                row["root_cause"] or "",
+                markdown_safe(row["root_cause"]),
                 "",
                 "### Fix Steps",
                 "",
-                row["fix_steps"] or "",
+                markdown_safe(row["fix_steps"]),
                 "",
                 "### Prevention",
                 "",
-                row["prevention_rule"] or "",
+                markdown_safe(row["prevention_rule"]),
                 "",
                 "### Verification",
                 "",
-                row["verification_steps"] or "",
+                markdown_safe(row["verification_steps"]),
                 "",
             ]
         )
