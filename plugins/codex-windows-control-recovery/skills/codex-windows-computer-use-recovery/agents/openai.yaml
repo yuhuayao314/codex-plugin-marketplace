@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows Computer Use Recovery"
+  short_description: "Safely recover Windows Computer Use"
+  default_prompt: "Use $codex-windows-computer-use-recovery to diagnose and safely restore Codex Desktop Computer Use on Windows without uninstalling Codex."

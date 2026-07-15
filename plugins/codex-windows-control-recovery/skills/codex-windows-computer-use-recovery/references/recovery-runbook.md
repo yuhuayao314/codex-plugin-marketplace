@@ -1,4 +1,4 @@
-# Recovery runbook
+# Computer Use recovery runbook
 
 ## 1. Establish evidence
 
@@ -6,21 +6,20 @@ Record:
 
 - installed Codex package full name, version and install location
 - current Codex executable paths and process identifiers
-- writable runtime locations and SHA256 values
-- presence of Computer Use and node_repl in the current task
-- current named-pipe observations
-- exact browser or Chrome extension error
+- writable Computer Use runtime locations and SHA256 values
+- presence of Computer Use and its helper transport in the current task
+- current codex-computer-use named-pipe observations
 - recent Codex log excerpts around relocation, pipe and tool registration
 
 Run the read-only diagnostic script first. Do not mutate while evidence is incomplete.
 
 ## 2. Classify the failure
 
-### Settings page missing
+### Computer Use settings page missing
 
 Likely package availability gate regression. Confirm the installed build changed. Package work is version-specific; follow package-gate-rebuild.md.
 
-### Settings page present, tool absent
+### Settings page present, Computer Use tool absent
 
 Likely live-process schema or writable runtime failure. Check logs and runtime hashes. Repair only an identified runtime, then restart safely.
 
@@ -32,17 +31,9 @@ If runtime verification passes, the old desktop process probably retained a stal
 
 The packaged source may be encrypted or unreadable. Do not weaken WindowsApps permissions. Locate an unencrypted source for the exact same build and compare its SHA256 with the expected build artifact before copying.
 
-### named pipe does not connect
+### codex-computer-use named pipe does not connect
 
 Check whether stale SKY_CUA entries were persisted. Remove only those exact keys. Then restart and observe the newly generated pipe.
-
-### Browser refuses a URL
-
-Read the actual error. Destination policy is separate from installation. Test an allowed public destination and preserve the proxy and enterprise policy.
-
-### Chrome says extension not connected
-
-Treat it as an external Chrome extension issue. Confirm installation, enablement and connection in Chrome. Do not use Computer Use success as proof of Chrome extension success.
 
 ## 3. Repair narrowly
 
@@ -73,14 +64,14 @@ Run preflight first. The restart helper must select only current-package executa
 Success requires all of the following in a new post-restart task:
 
 - Computer Use is exposed
-- node_repl is exposed when browser control needs it
+- its required helper runtime is exposed and callable
 - no stale pipe variables are persisted
-- the live Computer Use pipe is created
+- the live codex-computer-use pipe is created
 - actual Computer Use opens Notepad
 - actual Computer Use types a unique nonce
 - visible Notepad content is read back and matches the nonce
 
-Terminal-created files, SendKeys, PowerShell UI Automation and screenshots without an actual tool call are not acceptable substitutes.
+Terminal-created files, SendKeys, PowerShell UI Automation and screenshots without an actual Computer Use invocation are not acceptable substitutes.
 
 ## 6. After the next update
 

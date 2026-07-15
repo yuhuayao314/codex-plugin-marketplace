@@ -1,26 +1,33 @@
 {
   "name": "codex-windows-control-recovery",
-  "version": "1.0.0",
-  "description": "Diagnose and safely recover Codex Desktop Computer Use and browser-control plumbing on Windows after app updates.",
+  "version": "1.0.0+codex.20260715165606",
+  "description": "Diagnose and safely recover Codex Desktop Computer Use on Windows after app updates.",
   "author": {
     "name": "yuhuayao314"
   },
   "homepage": "https://github.com/yuhuayao314/codex-windows-control-recovery",
   "repository": "https://github.com/yuhuayao314/codex-windows-control-recovery",
   "license": "MIT",
+  "keywords": [
+    "codex",
+    "windows",
+    "computer-use",
+    "computer-control",
+    "recovery"
+  ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Windows Control Recovery",
-    "shortDescription": "Recover Windows control without uninstalling Codex",
-    "longDescription": "A fail-closed diagnostic and recovery runbook for Codex Desktop Computer Use, in-app browser control, writable runtimes, named pipes, and post-update verification on Windows.",
+    "displayName": "Windows Computer Use Recovery",
+    "shortDescription": "Recover Computer Use without uninstalling Codex",
+    "longDescription": "A fail-closed diagnostic and recovery runbook for Codex Desktop Computer Use availability gates, writable runtimes, named pipes, live tool injection, and post-update verification on Windows.",
     "developerName": "yuhuayao314",
     "category": "Productivity",
     "capabilities": [
-      "Windows diagnostics",
-      "Computer Use recovery",
-      "Browser control diagnosis",
+      "Computer Use diagnostics",
+      "Writable runtime recovery",
+      "Named-pipe diagnosis",
       "Safe post-update verification"
     ],
-    "defaultPrompt": "Use $codex-windows-control-recovery to diagnose and safely restore Codex Desktop Computer Use on Windows without uninstalling, resetting, or changing language settings."
+    "defaultPrompt": "Use $codex-windows-computer-use-recovery to diagnose and safely restore Codex Desktop Computer Use on Windows without uninstalling, resetting, or changing language settings."
   }
 }

@@ -104,7 +104,7 @@ $report = [ordered]@{
     notes = @(
         'This report is read-only.'
         'Absence of a tool in a task schema cannot be proven from PowerShell; verify inside a fresh Codex task after restart.'
-        'In-app Browser, external Chrome control, and Computer Use are separate paths.'
+        'This diagnostic is scoped only to Windows Computer Use.'
     )
 }
 

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Windows Control Recovery"
-  short_description: "Safely restore Windows control after updates"
-  default_prompt: "Use $codex-windows-control-recovery to diagnose and safely restore Codex Desktop Computer Use on Windows without uninstalling Codex."
