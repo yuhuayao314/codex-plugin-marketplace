@@ -26,4 +26,10 @@ Run the skill again from Phase 1. Store updates replace the signed application p
 
 It does not contain a blind, permanent ASAR patcher. Upstream bundles change frequently. Package-gate work must identify semantic anchors in the currently installed build, assert expected match counts, rebuild integrity metadata, sign a higher-version MSIX, and stop if any assumption changes.
 
-Licensed under MIT.
+## License
+
+Copyright (c) 2026 yuhuayao314.
+
+This repository is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and other noncommercial use is permitted. Commercial use, paid redistribution, resale, or use as part of a paid service requires separate written permission from yuhuayao314.
+
+This is a source-available license and is not an OSI-approved open-source license.
